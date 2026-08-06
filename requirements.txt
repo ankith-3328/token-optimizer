@@ -3,3 +3,4 @@ transformers
 sentence-transformers
 numpy
 pytest
+ollama
