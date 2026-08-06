@@ -4,3 +4,4 @@ sentence-transformers
 numpy
 pytest
 ollama
+python-dotenv

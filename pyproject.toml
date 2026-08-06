@@ -3,14 +3,19 @@ name = "token-optimizer"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "sentence-transformers>=5.6.1",
-    "ollama>=0.5.1",
-    "tiktoken>=0.13.0",
+    "torch",
+    "transformers",
+    "tiktoken",
+    "sentence-transformers",
+    "numpy",
+    "python-dotenv",
+    "pytest",
+    "ollama",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=9.1.1",
+    "pytest",
 ]
 
 [tool.pytest.ini_options]
