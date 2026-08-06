@@ -879,10 +879,13 @@ def _aggregate_to_words(
 ) -> list[tuple[str, int, int, float]]:
     """Group BPE tokens into whole words using character offsets.
 
-    GPT-2's byte-level BPE encodes the leading space as part of the *next*
-    token (e.g. " exist" is one token), so offsets are contiguous at word
-    boundaries, not gapped. A new word starts when the token's own text
-    begins with whitespace — not when there's a gap between offsets.
+    A new word starts when there is a gap (whitespace) between the previous
+    token's end offset and this token's start offset. Score = mean of the
+    word's subword surprisals; +inf propagates so an unscored first token keeps
+    its whole word.
+
+    Without this step, "vulnerabilities" -> "vulner|abilities" can be pruned
+    apart and the output becomes gibberish.
     """
     words: list[tuple[str, int, int, float]] = []
     cur_start = cur_end = None
@@ -891,21 +894,12 @@ def _aggregate_to_words(
     for (start, end), score in zip(offsets, token_scores):
         if start == end:                       # special/empty token
             continue
-
-        # Trim a leading space off this token's span before deciding
-        # whether it starts a new word.
-        piece_start = start
-        if text[piece_start].isspace():
-            piece_start += 1
-        if piece_start >= end:                 # token was pure whitespace
-            continue
-
-        starts_new_word = cur_end is None or start > cur_end or text[start].isspace()
+        starts_new_word = cur_end is None or start > cur_end
         if starts_new_word:
             if cur_start is not None:
                 words.append((text[cur_start:cur_end], cur_start, cur_end,
                               _mean_inf(cur_scores)))
-            cur_start, cur_end, cur_scores = piece_start, end, [score]
+            cur_start, cur_end, cur_scores = start, end, [score]
         else:
             cur_end = end
             cur_scores.append(score)
@@ -935,11 +929,7 @@ def _protected_char_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _is_protected(
-    word: str,
-    start: int,
-    end: int,
-    protected_spans: list[tuple[int, int]],
-    sentence_start: int,
+    word: str, start: int, end: int, protected_spans: list[tuple[int, int]]
 ) -> bool:
     """Veto removal of negations, constraints, numbers, placeholders, proper nouns."""
     normalized = re.sub(r"[^\w']", "", word).lower()
@@ -948,7 +938,7 @@ def _is_protected(
     if any(s < end and start < e for s, e in protected_spans):
         return True
     # Mid-sentence capitalization is a cheap proper-noun heuristic.
-    if word[:1].isupper() and start > sentence_start and _WORD_CHARS.search(word):
+    if word[:1].isupper() and start > 0 and _WORD_CHARS.search(word):
         return True
     return False
 
@@ -1121,23 +1111,18 @@ class PerplexityPruningStage(CompressionStage):
         sentence_spans = _sentence_spans(text)
         protected_spans = _protected_char_spans(text)
 
-        units: list[ScoredUnit] = []
-        for i, (word, start, end, score) in enumerate(words):
-            sentence_id = _sentence_id_for(start, sentence_spans)
-            sentence_start = sentence_spans[sentence_id][0]
-            units.append(
-                ScoredUnit(
-                    text=word,
-                    start=start,
-                    end=end,
-                    index=i,
-                    surprisal=score,
-                    protected=_is_protected(
-                        word, start, end, protected_spans, sentence_start
-                    ),
-                    sentence_id=sentence_id,
-                )
+        units = [
+            ScoredUnit(
+                text=word,
+                start=start,
+                end=end,
+                index=i,
+                surprisal=score,
+                protected=_is_protected(word, start, end, protected_spans),
+                sentence_id=_sentence_id_for(start, sentence_spans),
             )
+            for i, (word, start, end, score) in enumerate(words)
+        ]
         self.last_units = units
         return units
 ```
