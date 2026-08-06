@@ -51,6 +51,4 @@ class CompressionResult:
 class EvalResult:
     strategy_name: str
     token_reduction_pct: float
-    cost_saved: float
     semantic_similarity: float
-    accuracy_retained: Optional[float] = None
