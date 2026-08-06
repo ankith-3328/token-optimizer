@@ -362,7 +362,7 @@ SCORER_MAX_CTX = 1024          # distilGPT2 hard context limit
 SCORER_STRIDE = 512            # sliding-window stride for long inputs
 
 # ── Compression ──────────────────────────────────────────────────────────────
-TARGET_RATIO = 0.5             # keep 50% of tokens by default
+TARGET_RATIO = 0.7             # keep 50% of tokens by default
 COARSE_PASS_ENABLED = True     # drop whole low-information sentences first
 
 # ── Semantic rewrite (Dev C) — local seq2seq, no API, no key ─────────────────
@@ -879,13 +879,16 @@ def _aggregate_to_words(
 ) -> list[tuple[str, int, int, float]]:
     """Group BPE tokens into whole words using character offsets.
 
-    A new word starts when there is a gap (whitespace) between the previous
-    token's end offset and this token's start offset. Score = mean of the
-    word's subword surprisals; +inf propagates so an unscored first token keeps
-    its whole word.
+    GPT-2's byte-level BPE encodes the leading space as part of the *next*
+    token (e.g. " exist" is a single token), so consecutive tokens' offsets
+    are contiguous at word boundaries, not gapped. A new word therefore
+    starts either when there's a genuine offset gap, OR when the token's
+    own text begins with a whitespace character — and that leading space is
+    trimmed off the stored span so it doesn't become part of the word.
 
-    Without this step, "vulnerabilities" -> "vulner|abilities" can be pruned
-    apart and the output becomes gibberish.
+    Without this, "vulnerabilities" -> "vulner|abilities" can be pruned
+    apart and the output becomes gibberish — or worse, entire sentences
+    collapse into one unsplit "word" and pruning does nothing at all.
     """
     words: list[tuple[str, int, int, float]] = []
     cur_start = cur_end = None
@@ -894,12 +897,23 @@ def _aggregate_to_words(
     for (start, end), score in zip(offsets, token_scores):
         if start == end:                       # special/empty token
             continue
-        starts_new_word = cur_end is None or start > cur_end
+
+        piece_start = start
+        if text[piece_start].isspace():
+            piece_start += 1
+        if piece_start >= end:                 # token was pure whitespace
+            continue
+
+        starts_new_word = (
+            cur_end is None
+            or start > cur_end
+            or text[start].isspace()
+        )
         if starts_new_word:
             if cur_start is not None:
                 words.append((text[cur_start:cur_end], cur_start, cur_end,
                               _mean_inf(cur_scores)))
-            cur_start, cur_end, cur_scores = start, end, [score]
+            cur_start, cur_end, cur_scores = piece_start, end, [score]
         else:
             cur_end = end
             cur_scores.append(score)
@@ -908,7 +922,6 @@ def _aggregate_to_words(
         words.append((text[cur_start:cur_end], cur_start, cur_end,
                       _mean_inf(cur_scores)))
     return words
-
 
 def _mean_inf(values: list[float]) -> float:
     """Mean that propagates infinity (an always-keep marker)."""
@@ -929,16 +942,30 @@ def _protected_char_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _is_protected(
-    word: str, start: int, end: int, protected_spans: list[tuple[int, int]]
+    word: str,
+    start: int,
+    end: int,
+    protected_spans: list[tuple[int, int]],
+    sentence_spans: list[tuple[int, int]],
 ) -> bool:
-    """Veto removal of negations, constraints, numbers, placeholders, proper nouns."""
+    """Veto removal of negations, constraints, numbers, placeholders, proper nouns.
+
+    Mid-sentence capitalization is a cheap proper-noun heuristic — but a word
+    capitalized only because it starts its own sentence isn't a proper noun,
+    it's just grammar. We exclude sentence-initial words from that check so
+    we don't over-protect (and artificially inflate the achievable ratio).
+    """
     normalized = re.sub(r"[^\w']", "", word).lower()
     if normalized in config.PROTECTED_WORDS:
         return True
     if any(s < end and start < e for s, e in protected_spans):
         return True
-    # Mid-sentence capitalization is a cheap proper-noun heuristic.
-    if word[:1].isupper() and start > 0 and _WORD_CHARS.search(word):
+
+    sid = _sentence_id_for(start, sentence_spans)
+    sentence_start = sentence_spans[sid][0]
+    is_sentence_initial = start == sentence_start
+
+    if word[:1].isupper() and not is_sentence_initial and _WORD_CHARS.search(word):
         return True
     return False
 
