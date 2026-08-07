@@ -14,6 +14,16 @@ COARSE_PASS_ENABLED = True
 COARSE_KEEP_FIRST = True
 COARSE_KEEP_LAST = True
 
+TOKENIZER_ENCODING = "cl100k_base"
+
+PRICING = {
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4-turbo": (10.00, 30.00),
+    "gpt-3.5-turbo": (0.50, 1.50),
+}
+
+COST_MODEL = "gpt-4o"
+
 PROTECTED_WORDS: set[str] = {
     "not", "no", "never", "none", "neither", "nor", "without",
     "except", "unless", "cannot", "cant", "can't", "dont", "don't",
