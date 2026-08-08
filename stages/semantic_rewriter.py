@@ -4,6 +4,8 @@ import ollama
 
 import config
 from interfaces import CompressionStage
+from evaluator import cosine_similarity
+from tokenizer_utils import count_tokens
 
 
 class SemanticRewriter(CompressionStage):
@@ -24,11 +26,21 @@ class SemanticRewriter(CompressionStage):
                     {
                         "role": "system",
                         "content": (
-                            "You are a prompt compression engine. "
-                            "Rewrite prompts using fewer words while preserving meaning. "
-                            "Do not add information. "
-                            "Eliminate unnecessary information."
-                            "Reduce the prompt size as much as possible."
+                            "You are a prompt compression engine.\n\n"
+                            "Primary goal: preserve meaning.\n"
+                            "Secondary goal: reduce token count.\n\n"
+                            "Never remove:\n"
+                            "- instructions\n"
+                            "- constraints\n"
+                            "- negations\n"
+                            "- examples\n"
+                            "- numbers\n"
+                            "- placeholders\n"
+                            "- code snippets\n\n"
+                            "Only remove redundancy and verbosity.\n"
+                            "Do not add information.\n"
+                            "Eliminate unnecessary information.\n"
+                            "Reduce the prompt size as much as possible.\n"
                             "Return only the rewritten prompt."
                         ),
                     },
@@ -42,6 +54,15 @@ class SemanticRewriter(CompressionStage):
             rewritten = response["message"]["content"].strip()
 
             if not rewritten:
+                return text
+
+            # Reject negative compression
+            if count_tokens(rewritten) >= count_tokens(text):
+                return text
+
+            # Reject semantic drift
+            similarity = cosine_similarity(text, rewritten)
+            if similarity < 0.7:
                 return text
 
             return rewritten
