@@ -1,5 +1,3 @@
-"""Stage 1 — deterministic rule-based cleanup. Dev A."""
-
 from __future__ import annotations
 
 import re
