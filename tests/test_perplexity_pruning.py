@@ -1,4 +1,3 @@
-"""Dev B's tests. Every case here maps to a real failure mode."""
 from __future__ import annotations
 
 import math
